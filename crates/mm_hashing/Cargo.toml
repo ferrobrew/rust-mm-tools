@@ -1,0 +1,23 @@
+[package]
+name = "mm_hashing"
+authors.workspace = true
+description = "Mad Max Hashing Utilities"
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+publish = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[lints]
+workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+
+[dependencies]
+binrw.workspace = true
+const_for.workspace = true
+paste.workspace = true
+static_assertions.workspace = true

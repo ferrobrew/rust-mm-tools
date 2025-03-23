@@ -1,7 +1,8 @@
 use std::{collections::HashMap, sync::Arc};
 
 use aligned_vec::{AVec, RuntimeAlign};
-use mm_file_formats::adf::{AdfFile, AdfInstance, AdfPrimitive, AdfScalarType, AdfType};
+
+use super::{AdfFile, AdfInstance, AdfPrimitive, AdfScalarType, AdfType};
 
 #[derive(Clone, Debug, Default)]
 pub struct AdfReflectionContext {

@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use mm_file_formats::adf::{AdfFile, AdfMemberValue, AdfPrimitive, AdfScalarType, AdfType};
+use super::{AdfFile, AdfMemberValue, AdfPrimitive, AdfScalarType, AdfType};
 use serde::{Deserialize, Serialize};
 
 use super::reflection::{

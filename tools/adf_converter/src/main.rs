@@ -2,18 +2,12 @@ use std::io::Write;
 
 use anyhow::{anyhow, bail, Context};
 use binrw::{BinRead, BinWrite};
-
 use clap::Parser;
-use mm_file_formats::adf::AdfFile;
-
-mod adf;
-use adf::{
-    reflection::AdfReflectionContext,
-    types::{BUILT_IN_TYPE_LIBRARY, TYPE_LIBRARIES},
-    xml::AdfXml,
-};
-
 use serde::{Deserialize, Serialize};
+
+use mm_file_formats::adf::{
+    AdfFile, AdfReflectionContext, AdfXml, BUILT_IN_TYPE_LIBRARY, TYPE_LIBRARIES,
+};
 
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();

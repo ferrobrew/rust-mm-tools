@@ -17,10 +17,8 @@ workspace = true
 mm_file_formats.workspace = true
 mm_hashing.workspace = true
 
-aligned-vec.workspace = true
 anyhow.workspace = true
 binrw.workspace = true
-bytemuck.workspace = true
 clap.workspace = true
 quick-xml.workspace = true
 serde.workspace = true

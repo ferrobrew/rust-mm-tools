@@ -2,7 +2,7 @@ use std::path::Path;
 
 use binrw::binrw;
 
-use super::hash_little32;
+use super::{const_assert, hash_little32};
 
 #[binrw]
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
@@ -85,5 +85,5 @@ impl From<HashString> for u32 {
     }
 }
 
-const_assert_eq!(HashString::from_bytes(b"rico").hash(), 0x6041E481);
-const_assert_eq!(HashString::from_str("jc2").hash(), 0xCDF21378);
+const_assert!(HashString::from_bytes(b"rico").hash() == 0x6041E481);
+const_assert!(HashString::from_str("jc2").hash() == 0xCDF21378);

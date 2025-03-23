@@ -20,4 +20,3 @@ all-features = true
 binrw.workspace = true
 const_for.workspace = true
 paste.workspace = true
-static_assertions.workspace = true

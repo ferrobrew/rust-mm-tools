@@ -1,3 +1,5 @@
+use super::const_assert;
+
 const INITIAL_VALUE: u32 = 0xDEADBEEF;
 
 #[inline(always)]
@@ -85,5 +87,5 @@ pub const fn hash(data: &[u8]) -> u32 {
     c
 }
 
-const_assert_eq!(hash(b"char_debug_spawn_lizard"), 0x402851DF);
-const_assert_eq!(hash(b"char_debug_spawn_wasteland_wanderers"), 0xBA972C9F);
+const_assert!(hash(b"char_debug_spawn_lizard") == 0x402851DF);
+const_assert!(hash(b"char_debug_spawn_wasteland_wanderers") == 0xBA972C9F);

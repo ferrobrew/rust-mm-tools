@@ -1,7 +1,8 @@
 use std::io::{BufReader, Cursor};
 
 use binrw::BinRead;
-use mm_file_formats::adf::AdfFile;
+
+use super::AdfFile;
 
 macro_rules! adf_type_lib {
     ($extension:expr, $path:expr) => {
@@ -102,7 +103,7 @@ pub struct AdfTypeLib {
 }
 
 impl AdfTypeLib {
-    pub fn load(&self) -> anyhow::Result<AdfFile> {
+    pub fn load(&self) -> binrw::BinResult<AdfFile> {
         let mut reader = BufReader::new(Cursor::new(self.library));
         Ok(AdfFile::read_le(&mut reader)?)
     }

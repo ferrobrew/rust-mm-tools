@@ -17,7 +17,6 @@ workspace = true
 mm_file_formats.workspace = true
 mm_hashing.workspace = true
 
-aligned-vec.workspace = true
 anyhow.workspace = true
 binrw.workspace = true
 clap.workspace = true

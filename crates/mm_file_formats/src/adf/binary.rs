@@ -15,6 +15,8 @@ use thiserror::Error;
 
 use crate::common::{LengthVec, NullString, WriterExt};
 
+use super::{AdfRead, AdfReadWriteError, AdfTypeInfo, AdfWrite};
+
 #[derive(Clone, Debug, Default)]
 pub struct AdfFile {
     pub version: AdfVersion,
@@ -25,43 +27,82 @@ pub struct AdfFile {
 }
 
 impl AdfFile {
+    #[inline]
+    pub fn get_type_by_info<T: AdfTypeInfo>(&self) -> Option<&AdfType> {
+        self.get_type_by_hash(T::HASH)
+    }
+
     pub fn get_type_by_hash(&self, type_hash: u32) -> Option<&AdfType> {
         self.types
             .iter()
             .find(|type_def| type_def.type_hash == type_hash)
     }
 
-    pub fn get_type_by_name(&self, name: &impl AsRef<str>) -> Option<&AdfType> {
+    pub fn get_type_by_name(&self, name: impl AsRef<str>) -> Option<&AdfType> {
         let name = name.as_ref();
         self.types
             .iter()
             .find(|type_def| type_def.name.as_ref() == name)
     }
 
-    pub fn get_instance(
+    #[inline]
+    pub fn get_instance_by_type(
         &self,
-        name: &impl AsRef<str>,
+        name: impl AsRef<str>,
         type_def: &AdfType,
     ) -> Option<Arc<AdfInstance>> {
+        self.get_instance_by_hash(name, type_def.type_hash)
+    }
+
+    #[inline]
+    pub fn get_instance_by_info<T: AdfTypeInfo>(
+        &self,
+        name: impl AsRef<str>,
+    ) -> Option<Arc<AdfInstance>> {
+        self.get_instance_by_hash(name, T::HASH)
+    }
+
+    pub fn get_instance_by_hash(
+        &self,
+        name: impl AsRef<str>,
+        type_hash: u32,
+    ) -> Option<Arc<AdfInstance>> {
         let name = name.as_ref();
-        let type_hash = type_def.type_hash;
         self.instances
             .iter()
             .find(|inst| inst.type_hash == type_hash && inst.name.as_ref() == name)
             .cloned()
     }
 
-    // TODO: If an instance already exists, we should return an error containing the existing instance
-    pub fn new_instance(
+    #[inline]
+    pub fn new_instance_from_type(
         &mut self,
-        name: &impl AsRef<str>,
+        name: impl AsRef<str>,
         type_def: &AdfType,
     ) -> Option<Arc<AdfInstance>> {
-        if let Some(instance) = self.get_instance(name, type_def) {
+        self.new_instance_from_hash(name, type_def.type_hash)
+    }
+
+    #[inline]
+    pub fn new_instance_from_info<T: AdfTypeInfo>(
+        &mut self,
+        name: impl AsRef<str>,
+    ) -> Option<Arc<AdfInstance>> {
+        self.new_instance_from_hash(name, T::HASH)
+    }
+
+    pub fn new_instance_from_hash(
+        &mut self,
+        name: impl AsRef<str>,
+        type_hash: u32,
+    ) -> Option<Arc<AdfInstance>> {
+        let name = name.as_ref();
+        if let Some(instance) = self.get_instance_by_hash(name, type_hash) {
             Some(instance)
         } else {
+            let type_def = self.get_type_by_hash(type_hash)?;
             self.instances.push(Arc::new(AdfInstance {
-                name: NullString::from(name.as_ref()).into(),
+                name: NullString::from(name).into(),
                 type_hash: type_def.type_hash,
                 buffer: Mutex::new(
                     avec_rt!([type_def.alignment as usize]| 0u8; type_def.size as usize).into(),
@@ -270,6 +311,61 @@ pub struct AdfInstance {
     pub name: AdfReference<NullString>,
     pub type_hash: u32,
     pub buffer: Mutex<AVec<u8, RuntimeAlign>>,
+}
+
+impl AdfInstance {
+    pub fn read<T: AdfRead + AdfTypeInfo>(&self) -> Result<T, AdfInstanceReadWriteError> {
+        if self.type_hash != T::HASH {
+            return Err(AdfInstanceReadWriteError::Hash {
+                expected: self.type_hash,
+                found: T::HASH,
+            });
+        }
+
+        let Ok(buffer) = self.buffer.lock() else {
+            return Err(AdfInstanceReadWriteError::Lock);
+        };
+
+        Ok(T::read(
+            &mut std::io::BufReader::new(std::io::Cursor::new(buffer.as_ref())),
+            &mut Default::default(),
+        )?)
+    }
+
+    pub fn write<T: AdfWrite + AdfTypeInfo>(
+        &self,
+        value: &T,
+    ) -> Result<(), AdfInstanceReadWriteError> {
+        if self.type_hash != T::HASH {
+            return Err(AdfInstanceReadWriteError::Hash {
+                expected: self.type_hash,
+                found: T::HASH,
+            });
+        }
+
+        let Ok(mut buffer) = self.buffer.lock() else {
+            return Err(AdfInstanceReadWriteError::Lock);
+        };
+
+        let mut instance_buffer = vec![];
+        value.write(
+            &mut std::io::BufWriter::new(std::io::Cursor::new(&mut instance_buffer)),
+            &mut (T::SIZE, Default::default()),
+        )?;
+        *buffer = AVec::from_iter(T::ALIGN as usize, instance_buffer.into_iter());
+
+        Ok(())
+    }
+}
+
+#[derive(Error, Debug)]
+pub enum AdfInstanceReadWriteError {
+    #[error("adf error: {0}")]
+    Adf(#[from] AdfReadWriteError),
+    #[error("failed to get lock")]
+    Lock,
+    #[error("invalid hash, expected: {expected}, found: {found}")]
+    Hash { expected: u32, found: u32 },
 }
 
 impl Default for AdfInstance {

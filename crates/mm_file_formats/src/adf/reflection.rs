@@ -2,7 +2,10 @@ use std::{collections::HashMap, sync::Arc};
 
 use aligned_vec::{AVec, RuntimeAlign};
 
-use super::{AdfFile, AdfInstance, AdfPrimitive, AdfScalarType, AdfType};
+use super::{
+    AdfFile, AdfInstance, AdfPrimitive, AdfScalarType, AdfType, AdfTypeLib, BUILT_IN_TYPE_LIBRARY,
+    TYPE_LIBRARIES,
+};
 
 #[derive(Clone, Debug, Default)]
 pub struct AdfReflectionContext {
@@ -11,7 +14,24 @@ pub struct AdfReflectionContext {
 
 // TODO: we need to handle endian swapping + possible stack overflow; it's OK for now
 impl AdfReflectionContext {
-    pub fn load_types(&mut self, file: &AdfFile) {
+    pub fn from_extension(extension: impl AsRef<str>) -> binrw::BinResult<AdfReflectionContext> {
+        let mut result = Self::default();
+        result.load_types_from_library(BUILT_IN_TYPE_LIBRARY)?;
+        let extension = extension.as_ref();
+        for library in TYPE_LIBRARIES {
+            if library.extension == extension {
+                result.load_types_from_library(library)?;
+            }
+        }
+        Ok(result)
+    }
+
+    pub fn load_types_from_library(&mut self, library: &AdfTypeLib) -> binrw::BinResult<()> {
+        self.load_types_from_file(&library.load()?);
+        Ok(())
+    }
+
+    pub fn load_types_from_file(&mut self, file: &AdfFile) {
         self.types
             .extend(file.types.iter().map(|x| (x.type_hash, x.clone())));
     }
@@ -34,15 +54,10 @@ impl AdfReflectionContext {
         value: &AdfReflectedValue,
         adf: &mut AdfFile,
     ) {
-        let Some(type_info) = self.get_type(value.0) else {
-            todo!("failed to get type info: {}", value.0);
-        };
-
-        let Some(instance) = adf.new_instance(name, type_info) else {
+        let Some(instance) = adf.new_instance_from_hash(name, value.0) else {
             todo!("failed to create instance: {}", name.as_ref());
         };
 
-        // TODO: remove `AdfFile::new_instance` in favor of `AdfFile::insert_instance`
         let Ok(mut buffer) = instance.buffer.try_lock() else {
             todo!("failed to lock buffer");
         };

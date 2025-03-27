@@ -1,13 +1,11 @@
 use std::io::Write;
 
-use anyhow::{anyhow, bail, Context};
+use anyhow::{bail, Context};
 use binrw::{BinRead, BinWrite};
 use clap::Parser;
 use serde::{Deserialize, Serialize};
 
-use mm_file_formats::adf::{
-    AdfFile, AdfReflectionContext, AdfXml, BUILT_IN_TYPE_LIBRARY, TYPE_LIBRARIES,
-};
+use mm_file_formats::adf::{AdfFile, AdfReflectionContext, AdfXml};
 
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
@@ -26,17 +24,13 @@ fn main() -> anyhow::Result<()> {
     let file = std::fs::File::open(args.file.clone()).context("Failed to open file")?;
     let mut reader = std::io::BufReader::new(file);
 
-    // Load built-in types
-    let mut context = AdfReflectionContext::default();
-    context.load_types(&BUILT_IN_TYPE_LIBRARY.load()?);
-
     if extension == "xml" {
         // Parse the XML
         let mut deserializer = quick_xml::de::Deserializer::from_reader(reader);
         let adf = AdfXml::deserialize(&mut deserializer)?;
 
         // Load types based on extension
-        load_types(&mut context, &adf.extension)?;
+        let context = AdfReflectionContext::from_extension(&adf.extension)?;
 
         // Write ADF
         let output = adf.convert(&context);
@@ -45,7 +39,7 @@ fn main() -> anyhow::Result<()> {
         output.write_le(&mut writer)?;
     } else {
         // Load types based on extension
-        load_types(&mut context, extension)?;
+        let context = AdfReflectionContext::from_extension(extension)?;
 
         // Parse the ADF, intentionally not loading additional types
         let adf = AdfFile::read_le(&mut reader).context("Failed to parse ADF")?;
@@ -69,17 +63,4 @@ fn main() -> anyhow::Result<()> {
 struct Args {
     #[arg()]
     file: std::path::PathBuf,
-}
-
-fn load_types(context: &mut AdfReflectionContext, extension: &str) -> anyhow::Result<()> {
-    let mut found_types = false;
-    for type_library in TYPE_LIBRARIES {
-        if type_library.extension == extension {
-            found_types = true;
-            context.load_types(&type_library.load()?);
-        }
-    }
-    found_types
-        .then_some(())
-        .ok_or(anyhow!("Failed to find type libraries for {}", extension))
 }

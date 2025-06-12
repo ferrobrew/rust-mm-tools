@@ -137,13 +137,15 @@ impl AdfReflectionContext {
                 AdfReflectedValue(type_hash, AdfReflectedPrimitive::Structure(members))
             }
             AdfPrimitive::Pointer => {
+                let Some(type_info) = self.get_type(type_info.element_type_hash) else {
+                    todo!("failed to get type info: {}", type_info.element_type_hash);
+                };
                 // TODO: map of pointers, so we have one Arc<AdfReflectedValue> per read
-                let type_hash = type_info.element_type_hash;
                 let offset = *bytemuck::from_bytes::<u64>(slice) as usize;
                 AdfReflectedValue(
                     type_hash,
                     AdfReflectedPrimitive::Pointer(
-                        self.read_value_by_hash(type_hash, buffer, offset, 0)?
+                        self.read_value_by_info(type_info, buffer, offset, 0)?
                             .into(),
                     ),
                 )

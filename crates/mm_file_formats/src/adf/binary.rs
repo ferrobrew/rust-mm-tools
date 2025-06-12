@@ -80,7 +80,19 @@ impl AdfFile {
         name: impl AsRef<str>,
         type_def: &AdfType,
     ) -> Option<Arc<AdfInstance>> {
-        self.new_instance_from_hash(name, type_def.type_hash)
+        let name = name.as_ref();
+        if let Some(instance) = self.get_instance_by_hash(name, type_def.type_hash) {
+            Some(instance)
+        } else {
+            self.instances.push(Arc::new(AdfInstance {
+                name: NullString::from(name).into(),
+                type_hash: type_def.type_hash,
+                buffer: Mutex::new(
+                    avec_rt!([type_def.alignment as usize]| 0u8; type_def.size as usize).into(),
+                ),
+            }));
+            self.instances.last().cloned()
+        }
     }
 
     #[inline]

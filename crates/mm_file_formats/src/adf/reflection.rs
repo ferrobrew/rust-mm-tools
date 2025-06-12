@@ -54,7 +54,11 @@ impl AdfReflectionContext {
         value: &AdfReflectedValue,
         adf: &mut AdfFile,
     ) {
-        let Some(instance) = adf.new_instance_from_hash(name, value.0) else {
+        let Some(type_info) = self.get_type(value.0) else {
+            todo!("failed to get type info: {}", value.0);
+        };
+
+        let Some(instance) = adf.new_instance_from_type(name, type_info) else {
             todo!("failed to create instance: {}", name.as_ref());
         };
 

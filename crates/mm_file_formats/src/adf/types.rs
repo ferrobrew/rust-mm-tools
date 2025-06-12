@@ -55,6 +55,8 @@ pub static TYPE_LIBRARIES: &'static [AdfTypeLib] = &adf_type_libs!(
     ("effc", "game_effect_adf.adf"),
     ("effect_xmlc", "effect_adf.adf"),
     ("effect_xmlc", "game_effect_adf.adf"),
+    ("erl", "effect_adf.adf"),
+    ("erl", "game_effect_adf.adf"),
     ("encounterspawnpointsc", "encounterspawning_types.adf"),
     ("encvehupgdefc", "EncampmentVehicleUpgradeDefinitions.adf"),
     ("featuresc", "featuremenu_filter.adf"),

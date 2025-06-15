@@ -2,9 +2,11 @@ use std::{collections::HashMap, sync::Arc};
 
 use aligned_vec::{AVec, RuntimeAlign};
 
+use crate::common::NullString;
+
 use super::{
-    AdfFile, AdfInstance, AdfPrimitive, AdfScalarType, AdfType, AdfTypeLib, BUILT_IN_TYPE_LIBRARY,
-    TYPE_LIBRARIES,
+    AdfFile, AdfInstance, AdfPrimitive, AdfScalarType, AdfType, AdfTypeFlags, AdfTypeInfo,
+    AdfTypeLib, BUILT_IN_TYPE_LIBRARY, TYPE_LIBRARIES,
 };
 
 #[derive(Clone, Debug, Default)]
@@ -21,6 +23,40 @@ impl AdfReflectionContext {
         for library in TYPE_LIBRARIES {
             if library.extension == extension {
                 result.load_types_from_library(library)?;
+            }
+        }
+        // TODO: this doesn't work, the ADF is still garbage
+        if extension == "effc" {
+            const COUNT: u32 = 29;
+            type Type = [u32; COUNT as usize];
+            const NAME: &str = <Type as AdfTypeInfo>::NAME;
+            const HASH: u32 = <Type as AdfTypeInfo>::HASH;
+            const SIZE: u32 = <Type as AdfTypeInfo>::SIZE as u32;
+            const ALIGN: u32 = <Type as AdfTypeInfo>::ALIGN as u32;
+
+            result.types.insert(
+                HASH,
+                AdfType {
+                    primitive: AdfPrimitive::InlineArray,
+                    size: SIZE,
+                    alignment: ALIGN,
+                    type_hash: HASH,
+                    name: NullString::from(NAME).into(),
+                    flags: AdfTypeFlags::POD_READ | AdfTypeFlags::POD_WRITE,
+                    scalar_type: AdfScalarType::Signed,
+                    element_type_hash: <u32 as AdfTypeInfo>::HASH,
+                    element_length: COUNT,
+                    members: vec![].into(),
+                    enumerations: vec![].into(),
+                    padding: (),
+                },
+            );
+
+            if let Some(existing_type) = result
+                .types
+                .get_mut(&<Option<Arc<u32>> as AdfTypeInfo>::HASH)
+            {
+                existing_type.element_type_hash = HASH;
             }
         }
         Ok(result)
@@ -291,7 +327,7 @@ impl AdfReflectionContext {
                     todo!("failed to get type info: {}", type_info.element_type_hash);
                 };
 
-                let offset = align(buffer_size, type_info.alignment as usize);
+                let offset = align(buffer_size, type_info.alignment.max(16) as usize);
                 *bytemuck::from_bytes_mut::<u64>(&mut slice[0..8]) = offset as u64;
 
                 let slack = offset - buffer_size;
@@ -306,7 +342,7 @@ impl AdfReflectionContext {
                     todo!("failed to get type info: {}", type_info.element_type_hash);
                 };
 
-                let offset = align(buffer_size, type_info.alignment as usize);
+                let offset = align(buffer_size, type_info.alignment.max(16) as usize);
                 *bytemuck::from_bytes_mut::<u64>(&mut slice[0..8]) = offset as u64;
 
                 let count = values.len();

@@ -6,12 +6,13 @@ use std::{
 use aligned_vec::{avec_rt, AVec, RuntimeAlign};
 use binrw::{binrw, BinRead, BinWrite};
 use bitflags::bitflags;
-use mm_hashing::{hash_little32, HashString};
 use modular_bitfield::{
     bitfield,
     prelude::{B24, B8},
 };
 use thiserror::Error;
+
+use mm_hashing::{hash_little32, HashString};
 
 use crate::common::{LengthVec, NullString, WriterExt};
 

@@ -6,8 +6,9 @@ use std::{
 };
 
 use const_format::concatcp;
-use mm_hashing::{hash_little32, HashString};
 use thiserror::Error;
+
+use mm_hashing::{hash_little32, HashString};
 
 use crate::common::{ReaderExt, WriterExt};
 
@@ -41,7 +42,7 @@ macro_rules! type_hash {
     ([$ty:ty; $n:expr]) => {
         hash_little32(
             concatcp!(
-                mm_hashing::hash_little32(type_name!([$ty; $n]).as_bytes()),
+                hash_little32(type_name!([$ty; $n]).as_bytes()),
                 <$ty as AdfTypeInfo>::HASH,
                 concat!($n),
             )
@@ -50,9 +51,9 @@ macro_rules! type_hash {
     };
     // CommonHash ^ ElementHash
     ([$ty:ty]) => {
-        mm_hashing::hash_little32(
+        hash_little32(
             concatcp!(
-                mm_hashing::hash_little32(type_name!([$ty]).as_bytes()),
+                hash_little32(type_name!([$ty]).as_bytes()),
                 <$ty as AdfTypeInfo>::HASH,
             )
             .as_bytes(),
@@ -60,9 +61,9 @@ macro_rules! type_hash {
     };
     // CommonHash ^ ElementHash
     (&$ty:ty) => {
-        mm_hashing::hash_little32(
+        hash_little32(
             concatcp!(
-                mm_hashing::hash_little32(type_name!(&$ty).as_bytes()),
+                hash_little32(type_name!(&$ty).as_bytes()),
                 <$ty as AdfTypeInfo>::HASH,
             )
             .as_bytes(),
@@ -70,9 +71,7 @@ macro_rules! type_hash {
     };
     // CommonHash
     ($n:expr, $t:expr, $s:expr, $a:expr) => {
-        mm_hashing::hash_little32(
-            concat!($n, stringify!($t), stringify!($s), stringify!($a)).as_bytes(),
-        )
+        hash_little32(concat!($n, stringify!($t), stringify!($s), stringify!($a)).as_bytes())
     };
 }
 

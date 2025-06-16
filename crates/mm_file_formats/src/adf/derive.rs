@@ -166,6 +166,36 @@ pub trait AdfWrite: Sized {
     ) -> Result<(), AdfReadWriteError>;
 }
 
+impl<T: AdfRead + AdfTypeInfo + Default + Copy + 'static, const S: usize> AdfRead for [T; S] {
+    #[inline]
+    fn read<R: Read + Seek>(
+        reader: &mut R,
+        references: &mut AdfReaderReferences,
+    ) -> Result<Self, AdfReadWriteError> {
+        let mut result = [Default::default(); S];
+        reader.align(T::ALIGN)?;
+        for i in 0..S {
+            result[i] = T::read(reader, references)?;
+        }
+        Ok(result)
+    }
+}
+
+impl<T: AdfWrite + AdfTypeInfo + 'static, const S: usize> AdfWrite for [T; S] {
+    #[inline]
+    fn write<W: Write + Seek>(
+        &self,
+        writer: &mut W,
+        references: &mut AdfWriterReferences,
+    ) -> Result<(), AdfReadWriteError> {
+        writer.align(T::ALIGN)?;
+        for value in self.iter() {
+            value.write(writer, references)?;
+        }
+        Ok(())
+    }
+}
+
 impl<T: AdfRead + AdfTypeInfo + 'static> AdfRead for Option<Arc<T>> {
     #[inline]
     fn read<R: Read + Seek>(
@@ -304,7 +334,7 @@ impl<T: AdfRead + AdfTypeInfo + 'static> AdfRead for Arc<Vec<T>> {
 }
 
 impl<T: AdfWrite + AdfTypeInfo + 'static> AdfWrite for Arc<Vec<T>> {
-    // #[inline]
+    #[inline]
     fn write<W: Write + Seek>(
         &self,
         writer: &mut W,

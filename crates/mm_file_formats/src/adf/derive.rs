@@ -6,6 +6,7 @@ use std::{
 };
 
 use const_format::concatcp;
+use mm_hashing::{hash_little32, HashString};
 use thiserror::Error;
 
 use crate::common::{ReaderExt, WriterExt};
@@ -38,7 +39,7 @@ macro_rules! type_name {
 macro_rules! type_hash {
     // CommonHash ^ ElementHash ^ hash_little32(Length)
     ([$ty:ty; $n:expr]) => {
-        mm_hashing::hash_little32(
+        hash_little32(
             concatcp!(
                 mm_hashing::hash_little32(type_name!([$ty; $n]).as_bytes()),
                 <$ty as AdfTypeInfo>::HASH,
@@ -513,6 +514,39 @@ read_write_scalar!(f32);
 read_write_scalar!(u64);
 read_write_scalar!(i64);
 read_write_scalar!(f64);
+
+impl AdfTypeInfo for HashString {
+    const NAME: &str = "StringHash_48c5294d_4";
+    const HASH: u32 = 3225380031;
+    const SIZE: u64 = 4;
+    const ALIGN: u64 = 4;
+}
+
+impl AdfRead for HashString {
+    #[inline]
+    fn read<R: Read + Seek>(
+        reader: &mut R,
+        _references: &mut AdfReaderReferences,
+    ) -> Result<Self, AdfReadWriteError> {
+        let mut result = Self::default();
+        reader.align(Self::ALIGN)?;
+        reader.read_exact(bytemuck::bytes_of_mut(result.hash_mut()))?;
+        Ok(result)
+    }
+}
+
+impl AdfWrite for HashString {
+    #[inline]
+    fn write<W: Write + Seek>(
+        &self,
+        writer: &mut W,
+        _references: &mut AdfWriterReferences,
+    ) -> Result<(), AdfReadWriteError> {
+        writer.align(Self::ALIGN)?;
+        writer.write(bytemuck::bytes_of(&self.hash()))?;
+        Ok(())
+    }
+}
 
 #[derive(Error, Debug)]
 pub enum AdfReadWriteError {

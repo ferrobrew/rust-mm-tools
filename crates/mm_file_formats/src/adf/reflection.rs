@@ -72,8 +72,20 @@ impl AdfReflectionContext {
             .extend(file.types.iter().map(|x| (x.type_hash, x.clone())));
     }
 
-    pub fn get_type(&self, type_hash: u32) -> Option<&AdfType> {
+    pub fn get_type_by_info<T: AdfTypeInfo>(&self) -> Option<&AdfType> {
+        self.types.get(&T::HASH)
+    }
+
+    pub fn get_type_by_hash(&self, type_hash: u32) -> Option<&AdfType> {
         self.types.get(&type_hash)
+    }
+
+    pub fn get_type_by_name(&self, type_name: &impl AsRef<str>) -> Option<&AdfType> {
+        let type_name = type_name.as_ref();
+        self.types
+            .iter()
+            .map(|x| x.1)
+            .find(|x| x.name.as_str() == type_name)
     }
 
     pub fn read_instance(&self, instance: &AdfInstance) -> Result<AdfReflectedValue, ()> {
@@ -90,7 +102,7 @@ impl AdfReflectionContext {
         value: &AdfReflectedValue,
         adf: &mut AdfFile,
     ) {
-        let Some(type_info) = self.get_type(value.0) else {
+        let Some(type_info) = self.get_type_by_hash(value.0) else {
             todo!("failed to get type info: {}", value.0);
         };
 
@@ -113,7 +125,7 @@ impl AdfReflectionContext {
         offset: usize,
         shift: usize,
     ) -> Result<AdfReflectedValue, ()> {
-        let Some(type_info) = self.get_type(type_hash) else {
+        let Some(type_info) = self.get_type_by_hash(type_hash) else {
             todo!("failed to get type: {}", type_hash);
         };
 
@@ -128,7 +140,7 @@ impl AdfReflectionContext {
         offset: usize,
         shift: usize,
     ) -> Result<(), ()> {
-        let Some(type_info) = self.get_type(type_hash) else {
+        let Some(type_info) = self.get_type_by_hash(type_hash) else {
             return Err(());
         };
 
@@ -177,7 +189,7 @@ impl AdfReflectionContext {
                 AdfReflectedValue(type_hash, AdfReflectedPrimitive::Structure(members))
             }
             AdfPrimitive::Pointer => {
-                let Some(type_info) = self.get_type(type_info.element_type_hash) else {
+                let Some(type_info) = self.get_type_by_hash(type_info.element_type_hash) else {
                     todo!("failed to get type info: {}", type_info.element_type_hash);
                 };
                 // TODO: map of pointers, so we have one Arc<AdfReflectedValue> per read
@@ -191,7 +203,7 @@ impl AdfReflectionContext {
                 )
             }
             AdfPrimitive::Array => {
-                let Some(type_info) = self.get_type(type_info.element_type_hash) else {
+                let Some(type_info) = self.get_type_by_hash(type_info.element_type_hash) else {
                     todo!("failed to get type info: {}", type_info.element_type_hash);
                 };
                 // TODO: map of pointers, so we have one Arc<Vec<AdfReflectedValue>> per read
@@ -206,7 +218,7 @@ impl AdfReflectionContext {
             }
             AdfPrimitive::InlineArray => {
                 let count = type_info.element_length as usize;
-                let Some(type_info) = self.get_type(type_info.element_type_hash) else {
+                let Some(type_info) = self.get_type_by_hash(type_info.element_type_hash) else {
                     todo!("failed to get type info: {}", type_info.element_type_hash);
                 };
                 AdfReflectedValue(
@@ -323,7 +335,7 @@ impl AdfReflectionContext {
                 if type_info.element_type_hash != value.0 {
                     todo!("unexpected pointer type: {}", value.0);
                 };
-                let Some(type_info) = self.get_type(type_info.element_type_hash) else {
+                let Some(type_info) = self.get_type_by_hash(type_info.element_type_hash) else {
                     todo!("failed to get type info: {}", type_info.element_type_hash);
                 };
 
@@ -338,7 +350,7 @@ impl AdfReflectionContext {
             }
             AdfReflectedPrimitive::Array(values) => {
                 validate_primitive!(AdfPrimitive::Array);
-                let Some(type_info) = self.get_type(type_info.element_type_hash) else {
+                let Some(type_info) = self.get_type_by_hash(type_info.element_type_hash) else {
                     todo!("failed to get type info: {}", type_info.element_type_hash);
                 };
 
@@ -360,7 +372,7 @@ impl AdfReflectionContext {
                 if values.len() != count {
                     todo!("unexpected array size: {}", values.len());
                 };
-                let Some(type_info) = self.get_type(type_info.element_type_hash) else {
+                let Some(type_info) = self.get_type_by_hash(type_info.element_type_hash) else {
                     todo!("failed to get type info: {}", type_info.element_type_hash);
                 };
                 self.write_array(values, type_info, buffer, offset, count)?;

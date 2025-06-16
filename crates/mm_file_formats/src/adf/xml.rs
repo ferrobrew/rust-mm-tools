@@ -91,7 +91,7 @@ impl AdfXml {
                 .types
                 .iter()
                 .filter_map(|type_info| {
-                    let Some(type_info) = context.get_type(type_info.type_hash) else {
+                    let Some(type_info) = context.get_type_by_hash(type_info.type_hash) else {
                         todo!("failed to find type: {}", type_info.type_name);
                     };
 
@@ -172,7 +172,7 @@ fn insert(types: &mut HashSet<u32>, type_hash: u32) -> &mut HashSet<u32> {
 
 fn type_name(type_hash: u32, context: &AdfReflectionContext) -> Option<String> {
     context
-        .get_type(type_hash)
+        .get_type_by_hash(type_hash)
         .and_then(|type_info| match type_info.primitive {
             AdfPrimitive::Scalar => scalar_name(type_info).map(str::to_string),
             AdfPrimitive::Structure => Some(type_info.name.to_string()),
@@ -249,7 +249,7 @@ impl AdfXmlValue {
         names: &HashMap<u32, String>,
     ) -> Self {
         // TODO: Throw an error instead of unwrapping
-        let type_info = context.get_type(value.0).unwrap();
+        let type_info = context.get_type_by_hash(value.0).unwrap();
         let type_name = names.get(&value.0).unwrap().clone();
 
         let mut result = Self {
@@ -332,7 +332,7 @@ impl AdfXmlValue {
     ) -> AdfReflectedValue {
         let Some(type_info) = types
             .get(self.type_name.as_str())
-            .and_then(|&type_hash| context.get_type(type_hash))
+            .and_then(|&type_hash| context.get_type_by_hash(type_hash))
         else {
             todo!("failed to find type: {}", self.type_name);
         };

@@ -1,0 +1,21 @@
+[package]
+name = "adf_generator"
+authors.workspace = true
+description = "Mad Max ADF Converter"
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+publish = false
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+mm_file_formats.workspace = true
+
+anyhow.workspace = true
+clap.workspace = true
+convert_case.workspace = true

@@ -262,7 +262,7 @@ impl<T: AdfWrite + AdfTypeInfo + 'static> AdfWrite for Option<Arc<T>> {
                     writer.seek_absolute(references.0)?;
 
                     // Align writer, and take note of offset
-                    writer.align(T::ALIGN)?;
+                    writer.align(T::ALIGN.max(16))?;
                     let offset = writer.stream_position()?;
 
                     // Write zeroes, and update tail position
@@ -361,7 +361,7 @@ impl<T: AdfWrite + AdfTypeInfo + 'static> AdfWrite for Arc<Vec<T>> {
                     writer.seek_absolute(references.0)?;
 
                     // Align writer, and take note of offset
-                    let offset = writer.align(T::ALIGN)?;
+                    let offset = writer.align(T::ALIGN.max(16))?;
 
                     // Write zeroes, and update tail position
                     let count = self.len() as u64;

@@ -12,8 +12,413 @@ use adf::{XvmFormatDebugStrings, XvmFormatFunction, XvmFormatModule, XvmFunction
 mod ssa;
 use ssa::{SsaBinaryOperation, SsaBlock, SsaConstant, SsaInstruction, SsaLocal, SsaUnaryOperation};
 
+mod ast;
+use ast::{AstExpression, AstFunction, AstLValue, AstStatement};
+
 mod xvm;
 use xvm::{XvmControlFlowGraph, XvmInstruction, XvmObject, XvmObjectType, XvmOperation};
+
+#[derive(Clone)]
+struct BlockStackInfo {
+    /// Number of stack arguments this block expects
+    arg_count: u16,
+    /// Stack depth at block entry (including args)
+    entry_depth: u16,
+    /// Stack depth at block exit
+    exit_depth: u16,
+}
+
+fn calculate_block_stack_depths(
+    _function: &XvmFormatFunction,
+    operations: &[(XvmOperation, u16)],
+    cfg: &XvmControlFlowGraph,
+) -> Vec<BlockStackInfo> {
+    let mut block_infos: Vec<Option<BlockStackInfo>> = vec![None; cfg.count];
+
+    // Entry block starts with zero stack depth (only function arguments available)
+    block_infos[0] = Some(BlockStackInfo {
+        arg_count: 0,
+        entry_depth: 0,
+        exit_depth: 0,
+    });
+
+    // Fixed-point iteration to determine stack depths
+    let mut changed = true;
+    while changed {
+        changed = false;
+
+        for &block_idx in cfg.post_order.iter().rev() {
+            let block_idx_usize = block_idx as usize;
+
+            // Skip if we don't have info for any predecessor yet
+            if block_idx != 0 && cfg.predecessors[block_idx_usize].is_empty() {
+                continue;
+            }
+
+            // Determine entry depth from predecessors
+            let entry_depth = if block_idx == 0 {
+                0
+            } else {
+                // Get exit depth from any predecessor (they should all match)
+                let mut pred_exit_depth = None;
+                for &pred_idx in &cfg.predecessors[block_idx_usize] {
+                    if let Some(pred_info) = &block_infos[pred_idx as usize] {
+                        pred_exit_depth = Some(pred_info.exit_depth);
+                        break;
+                    }
+                }
+                pred_exit_depth.unwrap_or(0)
+            };
+
+            // Simulate the block to find exit depth
+            let mut stack_depth = entry_depth;
+            let range = &cfg.ranges[block_idx_usize];
+            let block_ops = &operations[range.start as usize..range.end as usize];
+
+            for &(operation, operand) in block_ops {
+                let (pop_count, push_count) = match operation {
+                    XvmOperation::BuildList => (operand, 1),
+                    XvmOperation::Call => (operand + 1, 1),
+                    XvmOperation::Print => (operand & 0b01111111111, 0),
+                    XvmOperation::Return => ((operand == 1) as u16, 0),
+                    _ => (operation.pop_count(), operation.push_count()),
+                };
+
+                stack_depth = stack_depth.saturating_sub(pop_count) + push_count;
+            }
+
+            let new_info = BlockStackInfo {
+                arg_count: entry_depth,
+                entry_depth,
+                exit_depth: stack_depth,
+            };
+
+            if block_infos[block_idx_usize].as_ref() != Some(&new_info) {
+                block_infos[block_idx_usize] = Some(new_info);
+                changed = true;
+            }
+        }
+    }
+
+    block_infos.into_iter().map(|info| info.unwrap()).collect()
+}
+
+fn convert_to_ssa_blocks(
+    module: &XvmFormatModule,
+    constants: &[(XvmObject, u64)],
+    debug_strings: &XvmFormatDebugStrings,
+    function: &XvmFormatFunction,
+    operations: &[(XvmOperation, u16)],
+    cfg: &XvmControlFlowGraph,
+    block_stack_info: &[BlockStackInfo],
+) -> Vec<SsaBlock> {
+    let mut blocks = Vec::with_capacity(cfg.count);
+
+    for block_idx in 0..cfg.count {
+        let mut context = SsaContext::new(
+            module,
+            constants,
+            debug_strings,
+            function,
+            &cfg.targets,
+            block_stack_info[block_idx].arg_count,
+        );
+
+        // Convert instructions
+        let range = &cfg.ranges[block_idx];
+        let block_ops = &operations[range.start as usize..range.end as usize];
+        let mut instructions = Vec::with_capacity(block_ops.len());
+
+        for (i, &(operation, operand)) in block_ops.iter().enumerate() {
+            let is_last = i == block_ops.len() - 1;
+            instructions.push(context.instruction(operation, operand, is_last));
+        }
+
+        // Create block arguments (these are the stack values passed from predecessors)
+        let mut arguments = Vec::new();
+        for i in 0..block_stack_info[block_idx].arg_count {
+            arguments.push(SsaLocal::Argument(i));
+        }
+
+        blocks.push(SsaBlock {
+            instructions,
+            predecessors: cfg.predecessors[block_idx].clone(),
+            successors: cfg.successors[block_idx].clone(),
+            arguments,
+        });
+    }
+
+    blocks
+}
+
+impl PartialEq for BlockStackInfo {
+    fn eq(&self, other: &Self) -> bool {
+        self.arg_count == other.arg_count
+            && self.entry_depth == other.entry_depth
+            && self.exit_depth == other.exit_depth
+    }
+}
+
+fn convert_ssa_to_ast(
+    function: &XvmFormatFunction,
+    blocks: &[SsaBlock],
+    cfg: &XvmControlFlowGraph,
+) -> AstFunction {
+    let mut converter = SsaToAstConverter::new(function);
+    converter.convert(blocks, cfg)
+}
+
+struct SsaToAstConverter {
+    function_name: String,
+    arg_count: u16,
+    var_names: std::collections::HashMap<SsaLocal, String>,
+}
+
+impl SsaToAstConverter {
+    fn new(function: &XvmFormatFunction) -> Self {
+        Self {
+            function_name: String::from_utf8_lossy(&function.name[0..function.name.len() - 1])
+                .into(),
+            arg_count: function.arg_count,
+            var_names: std::collections::HashMap::new(),
+        }
+    }
+
+    fn get_var_name(&mut self, local: &SsaLocal) -> String {
+        if let Some(name) = self.var_names.get(local) {
+            return name.clone();
+        }
+
+        let name = match local {
+            SsaLocal::Argument(n) => {
+                // Arguments are reversed in the bytecode
+                let arg_idx = self.arg_count - 1 - n;
+                format!("arg{}", arg_idx)
+            }
+            SsaLocal::Local(n) => format!("t{}", n),
+        };
+
+        self.var_names.insert(*local, name.clone());
+        name
+    }
+
+    fn convert_constant(&self, constant: &SsaConstant) -> AstExpression {
+        match constant {
+            SsaConstant::None => AstExpression::None,
+            SsaConstant::Float(f) => AstExpression::Float(*f),
+            SsaConstant::String(s) => AstExpression::String(s.clone()),
+            SsaConstant::StringHash(h) => AstExpression::StringHash(*h),
+        }
+    }
+
+    fn convert_local_to_expr(&mut self, local: &SsaLocal) -> AstExpression {
+        let name = self.get_var_name(local);
+        AstExpression::Variable { name }
+    }
+
+    fn convert_instruction_to_expr(&mut self, instr: &SsaInstruction) -> Option<AstExpression> {
+        match instr {
+            SsaInstruction::LoadConst { value, .. } => Some(self.convert_constant(value)),
+            SsaInstruction::LoadBool { value, .. } => Some(AstExpression::Bool(*value)),
+            SsaInstruction::LoadGlobal { name, .. } => {
+                Some(AstExpression::Global { name: name.clone() })
+            }
+            SsaInstruction::LoadLocal { local, .. } => Some(self.convert_local_to_expr(local)),
+            SsaInstruction::LoadAttr { src, name, .. } => Some(AstExpression::Attr {
+                obj: Box::new(self.convert_local_to_expr(src)),
+                name: name.clone(),
+            }),
+            SsaInstruction::LoadSubscript { idx, src, .. } => Some(AstExpression::Subscript {
+                obj: Box::new(self.convert_local_to_expr(src)),
+                index: Box::new(self.convert_local_to_expr(idx)),
+            }),
+            SsaInstruction::BinaryOp { op, lhs, rhs, .. } => Some(AstExpression::BinaryOp {
+                op: *op,
+                lhs: Box::new(self.convert_local_to_expr(lhs)),
+                rhs: Box::new(self.convert_local_to_expr(rhs)),
+            }),
+            SsaInstruction::UnaryOp { op, src, .. } => Some(AstExpression::UnaryOp {
+                op: *op,
+                src: Box::new(self.convert_local_to_expr(src)),
+            }),
+            SsaInstruction::BuildList { elements, .. } => {
+                let items = elements
+                    .iter()
+                    .map(|e| self.convert_local_to_expr(e))
+                    .collect();
+                Some(AstExpression::List(items))
+            }
+            SsaInstruction::Call { func, args, .. } => {
+                let func_expr = Box::new(self.convert_local_to_expr(func));
+                let arg_exprs = args.iter().map(|a| self.convert_local_to_expr(a)).collect();
+                Some(AstExpression::Call {
+                    func: func_expr,
+                    args: arg_exprs,
+                })
+            }
+            _ => None,
+        }
+    }
+
+    fn convert_instruction_to_stmt(&mut self, instr: &SsaInstruction) -> Option<AstStatement> {
+        match instr {
+            SsaInstruction::LoadConst { dst, .. }
+            | SsaInstruction::LoadBool { dst, .. }
+            | SsaInstruction::LoadGlobal { dst, .. }
+            | SsaInstruction::LoadLocal { dst, .. }
+            | SsaInstruction::LoadAttr { dst, .. }
+            | SsaInstruction::LoadSubscript { dst, .. }
+            | SsaInstruction::BinaryOp { dst, .. }
+            | SsaInstruction::UnaryOp { dst, .. }
+            | SsaInstruction::BuildList { dst, .. }
+            | SsaInstruction::Call { dst, .. } => {
+                if let Some(expr) = self.convert_instruction_to_expr(instr) {
+                    let var_name = self.get_var_name(dst);
+                    Some(AstStatement::Assign {
+                        target: AstLValue::Variable { name: var_name },
+                        value: Box::new(expr),
+                    })
+                } else {
+                    None
+                }
+            }
+            SsaInstruction::StoreLocal { local, src } => {
+                let var_name = self.get_var_name(local);
+                let expr = self.convert_local_to_expr(src);
+                Some(AstStatement::Assign {
+                    target: AstLValue::Variable { name: var_name },
+                    value: Box::new(expr),
+                })
+            }
+            SsaInstruction::StoreAttr { dst, src, name } => {
+                let obj = self.convert_local_to_expr(dst);
+                let value = self.convert_local_to_expr(src);
+                Some(AstStatement::Assign {
+                    target: AstLValue::Attr {
+                        obj: Box::new(obj),
+                        name: name.clone(),
+                    },
+                    value: Box::new(value),
+                })
+            }
+            SsaInstruction::StoreSubscript { dst, idx, src } => {
+                let obj = self.convert_local_to_expr(dst);
+                let index = self.convert_local_to_expr(idx);
+                let value = self.convert_local_to_expr(src);
+                Some(AstStatement::Assign {
+                    target: AstLValue::Subscript {
+                        obj: Box::new(obj),
+                        index: Box::new(index),
+                    },
+                    value: Box::new(value),
+                })
+            }
+            SsaInstruction::Return { value } => {
+                let ret_value = value.as_ref().map(|v| Box::new(self.convert_local_to_expr(v)));
+                Some(AstStatement::Return { value: ret_value })
+            }
+            SsaInstruction::Assert { cond } => {
+                let cond_expr = self.convert_local_to_expr(cond);
+                Some(AstStatement::Assert {
+                    cond: Box::new(cond_expr),
+                })
+            }
+            SsaInstruction::Print { new_line, values } => {
+                let value_exprs = values
+                    .iter()
+                    .map(|v| self.convert_local_to_expr(v))
+                    .collect();
+                Some(AstStatement::Print {
+                    new_line: *new_line,
+                    values: value_exprs,
+                })
+            }
+            SsaInstruction::Pop { .. } => None, // Ignore pop instructions
+            SsaInstruction::Jump { .. } | SsaInstruction::JumpIfFalse { .. } => {
+                None // Control flow handled separately
+            }
+        }
+    }
+
+    fn convert(&mut self, blocks: &[SsaBlock], cfg: &XvmControlFlowGraph) -> AstFunction {
+        // Generate parameter names
+        let mut params = Vec::new();
+        for i in 0..self.arg_count {
+            params.push(format!("arg{}", i));
+        }
+
+        // Convert blocks to statements (simple linear conversion for now)
+        let mut body = Vec::new();
+        let visited = self.convert_blocks_to_statements(blocks, cfg, 0, &mut std::collections::HashSet::new());
+        body.extend(visited);
+
+        AstFunction {
+            name: self.function_name.clone(),
+            params,
+            body,
+        }
+    }
+
+    fn convert_blocks_to_statements(
+        &mut self,
+        blocks: &[SsaBlock],
+        cfg: &XvmControlFlowGraph,
+        block_idx: u16,
+        visited: &mut std::collections::HashSet<u16>,
+    ) -> Vec<AstStatement> {
+        if visited.contains(&block_idx) {
+            return vec![];
+        }
+        visited.insert(block_idx);
+
+        let block = &blocks[block_idx as usize];
+        let mut statements = Vec::new();
+
+        // Convert instructions to statements
+        for instr in &block.instructions {
+            // Check if this is a control flow instruction
+            match instr {
+                SsaInstruction::Jump { target, .. } => {
+                    // Simple unconditional jump - just continue with the target
+                    let target_stmts = self.convert_blocks_to_statements(blocks, cfg, *target, visited);
+                    statements.extend(target_stmts);
+                }
+                SsaInstruction::JumpIfFalse { cond, target, .. } => {
+                    // This is a conditional branch
+                    let cond_expr = self.convert_local_to_expr(cond);
+
+                    // Find the fall-through block (next block in sequence)
+                    let fall_through = block_idx + 1;
+
+                    // Convert both branches
+                    let else_stmts = self.convert_blocks_to_statements(blocks, cfg, *target, visited);
+                    let then_stmts = if (fall_through as usize) < blocks.len() {
+                        self.convert_blocks_to_statements(blocks, cfg, fall_through, visited)
+                    } else {
+                        vec![]
+                    };
+
+                    statements.push(AstStatement::If {
+                        cond: Box::new(cond_expr),
+                        then_block: then_stmts,
+                        else_block: if else_stmts.is_empty() {
+                            None
+                        } else {
+                            Some(else_stmts)
+                        },
+                    });
+                }
+                _ => {
+                    if let Some(stmt) = self.convert_instruction_to_stmt(instr) {
+                        statements.push(stmt);
+                    }
+                }
+            }
+        }
+
+        statements
+    }
+}
 
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
@@ -42,7 +447,7 @@ fn main() -> anyhow::Result<()> {
                 .get_instance_by_info::<XvmFormatModule>("module")
                 .context("failed to find `module` instance")?
                 .read::<XvmFormatModule>()?;
-            let debug_info = xvm
+            let _debug_info = xvm
                 .get_instance_by_info::<XvmFunctionDebugArray>("debug_info")
                 .context("failed to find `debug_info` instance")?
                 .read::<XvmFunctionDebugArray>()?;
@@ -73,68 +478,33 @@ fn main() -> anyhow::Result<()> {
                     .collect();
 
                 // Create control flow graph
-                let mut cfg = XvmControlFlowGraph::new(&operations);
+                let cfg = XvmControlFlowGraph::new(&operations);
 
-                // Create initial block infos
-                let mut block_infos: Vec<Option<XvmBlockInfo>> = vec![None; cfg.count];
-                let mut stack_frame = XvmStackFrame::new(function);
-                // TODO: this isn't quite right, we want to use RPO, and iterate until converged...
-                loop {
-                    let changed = false;
-                    for block in cfg.post_order.iter().rev().skip(1).map(|&x| x as usize) {
-                        let block_info =
-                            XvmBlockInfo::new(stack_frame, operations.slice(&cfg.ranges[block]));
-                        stack_frame = block_info.exit_stack_frame.clone();
-                        block_infos[block] = Some(block_info);
-                    }
-                    if !changed {
-                        break;
-                    }
-                }
-                println!("{block_infos:?}");
+                // Calculate block stack depths using fixed-point iteration
+                let block_stack_info = calculate_block_stack_depths(function, &operations, &cfg);
 
-                // Create a temporary SSA context
-                let mut context =
-                    SsaContext::new(&module, &constants, &debug_strings, &function, &cfg.targets);
+                // Convert to SSA with block arguments
+                let blocks = convert_to_ssa_blocks(
+                    &module,
+                    &constants,
+                    &debug_strings,
+                    function,
+                    &operations,
+                    &cfg,
+                    &block_stack_info,
+                );
 
-                /*
-                 * TODO: We need to figure out which temporaries are actually block arguments
-                 *  - We must determine which temporaries are declared in a block, and which come from outside a block
-                 *  - If we create an ssa context per block, underflow == argument
-                 *  - Problem: we to hot swap temporaries if we do this, not ideal!
-                 *  - Might be okay though? So long as we validate stack never drops below local_count + arg_count?
-                 *  - This means arg numbers would be inverted compared to stack, but this is... maybe fine?
-                 */
+                // Debug: print CFG
+                // println!("{:?}", cfg);
 
-                /*
-                 * TODO: calculate stack depth per block, and validate program
-                 * - Do a pass that simulates push + pop counts
-                 * - Main issue: need to know the local stack depth to calculate the outgoing stack depth correctly (as underflowing the stack frame == reading func args)
-                 * - We must do this iteratively some how, erroring if the local stack depth is indeterminant
-                 */
+                // Debug: print SSA
+                // debug_print(function, &blocks);
 
-                // Convert ranges of operations into blocks using control flow graph
-                let mut blocks = Vec::with_capacity(cfg.count);
-                for block in 0..cfg.count {
-                    // Build up instructions
-                    let instructions = operations
-                        .slice(&cfg.ranges[block])
-                        .iter()
-                        .map(|&(operation, operand)| context.instruction(operation, operand))
-                        .collect();
+                // Convert SSA to AST
+                let ast = convert_ssa_to_ast(function, &blocks, &cfg);
 
-                    blocks.push(SsaBlock {
-                        instructions,
-                        predecessors: std::mem::take(&mut cfg.predecessors[block]),
-                        successors: std::mem::take(&mut cfg.successors[block]),
-                        arguments: vec![], // TODO: this needs implemented lol
-                    });
-                }
-
-                println!("{:?}", cfg);
-
-                // Debugging
-                debug_print(function, &blocks);
+                // Print AST
+                println!("{}\n", ast);
 
                 // TODO:
                 // - is it possible to overwrite args...? seem likely?
@@ -158,76 +528,6 @@ fn main() -> anyhow::Result<()> {
 struct Args {
     #[arg()]
     file: std::path::PathBuf,
-}
-
-#[derive(Clone, Debug)]
-struct XvmBlockInfo {
-    entry_stack_frame: XvmStackFrame,
-    exit_stack_frame: XvmStackFrame,
-    arg_count: u16,
-}
-
-impl XvmBlockInfo {
-    pub fn new(stack_frame: XvmStackFrame, operations: &[(XvmOperation, u16)]) -> Self {
-        let mut entry_stack_frame = stack_frame.clone();
-        let (exit_stack_frame, arg_count) = entry_stack_frame.simulate(operations);
-        Self {
-            entry_stack_frame,
-            exit_stack_frame,
-            arg_count,
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-struct XvmStackFrame {
-    offset: u16,
-    size: u16,
-}
-
-impl XvmStackFrame {
-    pub fn new(function: &XvmFormatFunction) -> XvmStackFrame {
-        XvmStackFrame {
-            offset: function.arg_count,
-            size: 0,
-        }
-    }
-
-    fn instruction(&mut self, operation: XvmOperation, operand: u16) -> u16 {
-        let (pop_count, push_count) = match operation {
-            XvmOperation::BuildList => (operand, 1),
-            XvmOperation::Call => (operand + 1, 1),
-            XvmOperation::Print => (operand & 0b01111111111, 0),
-            XvmOperation::Return => ((operand == 1) as u16, 0),
-            _ => (operation.pop_count(), operation.push_count()),
-        };
-
-        if pop_count <= self.size {
-            self.size -= pop_count;
-            self.size += push_count;
-            0
-        } else if pop_count - self.size <= self.offset {
-            let used_args = pop_count - self.size;
-            self.size = push_count;
-            used_args
-        } else {
-            panic!("stack underflow");
-        }
-    }
-
-    pub fn simulate(&mut self, operations: &[(XvmOperation, u16)]) -> (XvmStackFrame, u16) {
-        let mut used_args = 0;
-        for &(operation, operand) in operations {
-            used_args = used_args.max(self.instruction(operation, operand))
-        }
-        (
-            XvmStackFrame {
-                offset: self.offset + self.size,
-                size: 0,
-            },
-            used_args,
-        )
-    }
 }
 
 trait RangeSlice {
@@ -262,7 +562,15 @@ impl<'a> SsaContext<'a> {
         debug_strings: &'a XvmFormatDebugStrings,
         function: &XvmFormatFunction,
         targets: &'a HashMap<u16, u16>,
+        block_arg_count: u16,
     ) -> Self {
+        let mut stack = Vec::with_capacity(function.max_stack_depth as usize);
+
+        // Initialize stack with block arguments
+        for i in 0..block_arg_count {
+            stack.push(SsaLocal::Argument(i));
+        }
+
         Self {
             module,
             constants,
@@ -270,8 +578,8 @@ impl<'a> SsaContext<'a> {
             args: 0..function.arg_count,
             locals: function.arg_count..(function.arg_count + function.locals_count),
             targets,
-            stack: Vec::with_capacity(function.max_stack_depth as usize),
-            stack_count: 0,
+            stack,
+            stack_count: block_arg_count,
         }
     }
 
@@ -354,7 +662,11 @@ impl<'a> SsaContext<'a> {
         }
     }
 
-    fn instruction(&mut self, operation: XvmOperation, operand: u16) -> SsaInstruction {
+    fn get_jump_args(&self) -> Vec<SsaLocal> {
+        self.stack.clone()
+    }
+
+    fn instruction(&mut self, operation: XvmOperation, operand: u16, is_last: bool) -> SsaInstruction {
         match operation {
             XvmOperation::Assert => SsaInstruction::Assert { cond: self.pop() },
             XvmOperation::BinaryAnd
@@ -382,13 +694,22 @@ impl<'a> SsaContext<'a> {
                 args: self.list(operand),
                 dst: self.push(),
             },
-            XvmOperation::Jump => SsaInstruction::Jump {
-                target: self.target(operand),
-            },
-            XvmOperation::JumpIfFalse => SsaInstruction::JumpIfFalse {
-                cond: self.pop(),
-                target: self.target(operand),
-            },
+            XvmOperation::Jump => {
+                let args = if is_last { self.get_jump_args() } else { vec![] };
+                SsaInstruction::Jump {
+                    target: self.target(operand),
+                    args,
+                }
+            }
+            XvmOperation::JumpIfFalse => {
+                let cond = self.pop();
+                let args = if is_last { self.get_jump_args() } else { vec![] };
+                SsaInstruction::JumpIfFalse {
+                    cond,
+                    target: self.target(operand),
+                    args,
+                }
+            }
             XvmOperation::LoadAttr => SsaInstruction::LoadAttr {
                 src: self.pop(),
                 dst: self.push(),

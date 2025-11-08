@@ -93,10 +93,12 @@ pub enum SsaInstruction {
     // Control Flow
     Jump {
         target: u16,
+        args: Vec<SsaLocal>,
     },
     JumpIfFalse {
         cond: SsaLocal,
         target: u16,
+        args: Vec<SsaLocal>,
     },
 
     // Miscellaneous
@@ -189,9 +191,25 @@ impl Display for SsaInstruction {
                 Some(value) => f.write_fmt(format_args!("ret {value}")),
                 None => f.write_fmt(format_args!("ret")),
             },
-            SsaInstruction::Jump { target } => f.write_fmt(format_args!("jmp LABEL{target}")),
-            SsaInstruction::JumpIfFalse { cond, target } => {
-                f.write_fmt(format_args!("jz {cond}, LABEL{target}"))
+            SsaInstruction::Jump { target, args } => {
+                f.write_fmt(format_args!("jmp LABEL{target}("))?;
+                for (i, arg) in args.iter().enumerate() {
+                    f.write_fmt(format_args!("{}", arg))?;
+                    if i < args.len() - 1 {
+                        f.write_str(", ")?;
+                    }
+                }
+                f.write_str(")")
+            }
+            SsaInstruction::JumpIfFalse { cond, target, args } => {
+                f.write_fmt(format_args!("jz {cond}, LABEL{target}("))?;
+                for (i, arg) in args.iter().enumerate() {
+                    f.write_fmt(format_args!("{}", arg))?;
+                    if i < args.len() - 1 {
+                        f.write_str(", ")?;
+                    }
+                }
+                f.write_str(")")
             }
             SsaInstruction::Assert { cond } => f.write_fmt(format_args!("assert {cond}")),
             SsaInstruction::Print { new_line, values } => {
@@ -231,7 +249,7 @@ impl Display for SsaConstant {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SsaLocal {
     Argument(u16),
     Local(u16),

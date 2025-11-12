@@ -7,6 +7,7 @@ use modular_bitfield::prelude::*;
 
 use crate::adf::XvmFormatConstant;
 
+#[allow(dead_code)]
 pub struct XvmConstant {
     pub object: XvmObject,
     pub value: u64,
@@ -24,6 +25,7 @@ impl<T: std::borrow::Borrow<XvmFormatConstant>> From<T> for XvmConstant {
 
 #[bitfield]
 #[derive(Clone, Copy, Default, Debug, PartialEq)]
+#[allow(unused)]
 pub struct XvmObject {
     pub size: B8,
     pub capacity: B8,
@@ -55,6 +57,7 @@ pub enum XvmObjectType {
 
 #[bitfield]
 #[derive(Clone, Copy, Default, Debug, PartialEq)]
+#[allow(unused)]
 pub struct XvmInstruction {
     pub operation: XvmOperation,
     pub operand: B11,
@@ -160,6 +163,7 @@ impl XvmOperation {
 
 #[bitfield]
 #[derive(Clone, Copy, Default, Debug, PartialEq)]
+#[allow(unused)]
 pub struct XvmOperationMetadata {
     pub pop_count: B2,
     pub push_count: B2,

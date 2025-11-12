@@ -265,6 +265,7 @@ impl Display for SsaLocal {
 }
 
 // TODO: should we bring this back?
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SsaTemporary(pub u16);
 

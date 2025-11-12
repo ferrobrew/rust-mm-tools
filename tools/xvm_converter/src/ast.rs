@@ -24,6 +24,7 @@ pub enum AstStatement {
         then_block: Vec<AstStatement>,
         else_block: Option<Vec<AstStatement>>,
     },
+    #[allow(dead_code)]
     While {
         cond: Box<AstExpression>,
         body: Vec<AstStatement>,
@@ -33,6 +34,7 @@ pub enum AstStatement {
     },
 
     // Expression statement (function call, etc.)
+    #[allow(dead_code)]
     Expression {
         expr: Box<AstExpression>,
     },

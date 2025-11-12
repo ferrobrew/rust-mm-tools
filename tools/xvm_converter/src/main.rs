@@ -530,19 +530,6 @@ struct Args {
     file: std::path::PathBuf,
 }
 
-trait RangeSlice {
-    type Type;
-
-    fn slice(&self, range: &Range<u16>) -> &[Self::Type];
-}
-
-impl<T> RangeSlice for Vec<T> {
-    type Type = T;
-
-    fn slice(&self, range: &Range<u16>) -> &[Self::Type] {
-        &self[range.start as usize..range.end as usize]
-    }
-}
 
 struct SsaContext<'a> {
     module: &'a XvmFormatModule,
@@ -792,6 +779,7 @@ fn to_unary(operation: XvmOperation) -> SsaUnaryOperation {
     }
 }
 
+#[allow(dead_code)]
 fn debug_print(function: &XvmFormatFunction, blocks: &[SsaBlock]) {
     // Signature
     print!(

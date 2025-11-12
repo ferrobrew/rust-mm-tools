@@ -209,6 +209,7 @@ impl AdfWrite for XvmFormatConstant {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Default, Debug)]
 pub struct XvmFormatStructType {
     pub name_hash: u32,
